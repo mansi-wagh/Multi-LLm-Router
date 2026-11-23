@@ -1,0 +1,8 @@
+.env
+env/
+.venv/
+result/*.json
+result/.*.tmp
+benchmarks
+__pycache__/
+*.py[cod]

@@ -1,0 +1,124 @@
+models:
+  local:
+    kind: local
+    enabled: true
+    model: qwen2.5-coder:7b
+    base_url: http://localhost:11434
+  groq:
+    kind: cloud
+    enabled: true
+    model: openai/gpt-oss-120b
+    base_url: https://api.groq.com/openai/v1
+    api_key_env: GROQ_API_KEY
+  gemini:
+    kind: cloud
+    enabled: true
+    model: gemini-2.5-flash-lite
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    api_key_env: GEMINI_API_KEY
+    rate_limits:
+      tpm: 250000
+      rpd: 20
+
+labeler:
+  model: local
+  timeout_seconds: 10
+
+local_llm:
+  enabled: true
+
+jev:
+  enabled: true
+  url: https://opencode.ai/zen/v1/systemone
+  model: jev-1.13-free
+  timeout_ms: 3000
+  cutoffs:
+    difficulty_zero_confidence: 0
+    difficulty_easy: 1.5
+    difficulty_moderate: 2.5
+    private: 0.5
+    needs_web: 0.6
+
+private_label: private
+greeting_label: chitchat
+default_label: general
+
+labels:
+  private: private
+  chitchat: chitchat
+  simple_question: simple
+  rewrite_summarise: simple
+  code: code
+  reasoning: general
+  general: general
+
+keywords:
+  private:
+    - password
+    - otp
+    - aadhaar
+    - bank account
+  code:
+    - code
+    - coding
+    - program
+    - programming
+    - debug
+    - function
+    - class
+    - script
+    - python
+    - javascript
+    - typescript
+    - sql
+    - api
+    - compile
+    - exception
+    - bug
+  rewrite_summarise:
+    - summarize
+    - summarise
+    - summary
+    - rewrite
+    - rephrase
+    - tl;dr
+    - key points
+    - shorten
+  reasoning:
+    - reason
+    - reasoning
+    - analyze
+    - analyse
+    - compare
+    - derive
+    - prove
+    - evaluate
+    - trade-offs
+    - why
+    - how does
+    - step by step
+  simple_question:
+    - what is
+    - who is
+    - when is
+    - where is
+    - define
+
+lanes:
+  private:
+    - local
+  chitchat:
+    - local
+    - groq
+  simple:
+    - local
+    - groq
+    - gemini
+  general:
+    - groq
+    - gemini
+    - local
+  code:
+    - groq
+    - gemini
+    - local

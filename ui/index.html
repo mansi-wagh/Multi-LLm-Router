@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LLM Router</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font: 14px/1.5 system-ui, sans-serif;
+      color: #e8e8ed;
+      background: #111218;
+      --panel: #191b23;
+      --border: #30323d;
+      --muted: #9da2af;
+      --accent: #b7a4f5;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; }
+    button, textarea { font: inherit; }
+    .layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: 100vh; }
+    aside { padding: 22px 16px; border-right: 1px solid var(--border); background: #15161d; }
+    h1 { margin: 0 0 22px; font-size: 17px; }
+    h2 { margin: 24px 0 10px; color: var(--muted); font-size: 11px; text-transform: uppercase; }
+    #model-list, #model-counts { display: grid; gap: 9px; }
+    .model, .counter { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+    .model { padding: 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel); }
+    .model-name { font-size: 12px; font-weight: 650; }
+    .model-info { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+    input[type="checkbox"] { accent-color: var(--accent); }
+    .counter { color: var(--muted); font-size: 12px; }
+    .counter strong { color: #eee; font-variant-numeric: tabular-nums; }
+    main { display: flex; min-width: 0; flex-direction: column; min-height: 100vh; }
+    header { padding: 18px 24px; border-bottom: 1px solid var(--border); font-weight: 650; }
+    #conversation { display: flex; width: min(760px, 100%); flex: 1; flex-direction: column; gap: 18px; margin: 0 auto; padding: 28px 20px; }
+    .welcome { margin: auto; color: var(--muted); text-align: center; }
+    .message { display: grid; gap: 6px; max-width: 88%; }
+    .message.user { align-self: flex-end; }
+    .message.assistant { align-self: flex-start; }
+    .message-label { color: var(--muted); font-size: 11px; }
+    .bubble { padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); overflow-wrap: anywhere; white-space: pre-wrap; }
+    .user .bubble { background: #292438; }
+    .route-badge { display: flex; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: 10px; }
+    .pill { padding: 3px 7px; border: 1px solid var(--border); border-radius: 15px; }
+    .pill.lane { color: #d3c4ff; }
+    .pill.model { color: #9de0c1; }
+    .composer-wrap { position: sticky; bottom: 0; padding-top: 12px; background: #111218; }
+    form { display: flex; gap: 9px; padding: 9px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+    textarea { flex: 1; min-height: 38px; max-height: 170px; resize: none; border: 0; outline: 0; color: inherit; background: transparent; }
+    button { padding: 8px 13px; border: 0; border-radius: 8px; color: #17131f; background: var(--accent); cursor: pointer; }
+    button:disabled { opacity: .5; cursor: wait; }
+    #error { color: #ff9aab; font-size: 12px; }
+    @media (max-width: 650px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { border-right: 0; border-bottom: 1px solid var(--border); }
+      #model-list { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+      main { min-height: 65vh; }
+      header { padding: 14px 18px; }
+      #conversation { padding: 20px 14px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <h1>LLM Router</h1>
+      <h2>Router</h2>
+      <div class="model">
+        <div>
+          <div class="model-name" id="router-mode-label">Local router</div>
+          <div class="model-info">Jev router / Local router</div>
+        </div>
+        <input id="router-mode-toggle" type="checkbox" aria-label="Use Jev router">
+      </div>
+      <div class="model">
+        <div>
+          <div class="model-name">Local LLM labeller</div>
+          <div class="model-info" id="local-llm-state">On</div>
+        </div>
+        <input id="local-llm-toggle" type="checkbox" aria-label="Enable local LLM labeller">
+      </div>
+      <h2>Models</h2>
+      <div id="model-list"></div>
+      <h2>Request counters</h2>
+      <div class="counter"><span>Total requests</span><strong id="total-count">0</strong></div>
+      <div id="model-counts"></div>
+    </aside>
+    <main>
+      <header>Chat</header>
+      <section id="conversation" aria-live="polite">
+        <div class="welcome" id="welcome">Send a message to start chatting.</div>
+        <div class="composer-wrap">
+          <form id="chat-form">
+            <textarea id="prompt" aria-label="Message" placeholder="Message the router..." rows="1" required></textarea>
+            <button id="send-button" type="submit">Send</button>
+          </form>
+          <div id="error" role="status"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script>
+    const initialState = __INITIAL_STATE__;
+    const modelList = document.getElementById("model-list");
+    const modelCounts = document.getElementById("model-counts");
+    const conversation = document.getElementById("conversation");
+    const messages = [];
+    const counts = initialState.counters;
+    let privateConversation = false;
+
+    function renderRouterMode(mode) {
+      document.getElementById("router-mode-toggle").checked = mode === "jev";
+      document.getElementById("router-mode-label").textContent =
+        mode === "jev" ? "Jev router" : "Local router";
+    }
+
+    function renderLocalLlm(enabled) {
+      document.getElementById("local-llm-toggle").checked = enabled;
+      document.getElementById("local-llm-state").textContent = enabled ? "On" : "Off";
+    }
+
+    async function updateRouterMode(update) {
+      const response = await fetch("/router-mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(update)
+      });
+      if (!response.ok) throw new Error("Could not update router mode");
+      const state = await response.json();
+      initialState.router_mode = state.mode;
+      initialState.local_llm_enabled = state.local_llm;
+      renderRouterMode(state.mode);
+      renderLocalLlm(state.local_llm);
+    }
+
+    function renderCounters(nextCounts = counts) {
+      document.getElementById("total-count").textContent = nextCounts.total_requests;
+      modelCounts.replaceChildren();
+      for (const [name, count] of Object.entries(nextCounts.models)) {
+        const row = document.createElement("div");
+        row.className = "counter";
+        const label = document.createElement("span");
+        label.textContent = name;
+        const value = document.createElement("strong");
+        value.textContent = count;
+        row.append(label, value);
+        modelCounts.append(row);
+      }
+    }
+
+    function renderModels(models) {
+      for (const [name, info] of Object.entries(models)) {
+        const row = document.createElement("div");
+        row.className = "model";
+        const details = document.createElement("div");
+        const title = document.createElement("div");
+        title.className = "model-name";
+        title.textContent = name;
+        const description = document.createElement("div");
+        description.className = "model-info";
+        description.textContent = `${info.kind} · ${info.model}`;
+        details.append(title, description);
+        const toggle = document.createElement("input");
+        toggle.type = "checkbox";
+        toggle.checked = info.enabled;
+        toggle.setAttribute("aria-label", `Enable ${name}`);
+        toggle.addEventListener("change", async () => {
+          toggle.disabled = true;
+          try {
+            const response = await fetch("/models", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: name, enabled: toggle.checked })
+            });
+            if (!response.ok) throw new Error("Could not update model");
+            info.enabled = (await response.json()).enabled;
+          } catch (error) {
+            toggle.checked = !toggle.checked;
+            document.getElementById("error").textContent = error.message;
+          } finally {
+            toggle.disabled = false;
+          }
+        });
+        row.append(details, toggle);
+        modelList.append(row);
+      }
+    }
+
+    function addMessage(role, text) {
+      document.getElementById("welcome")?.remove();
+      const wrapper = document.createElement("div");
+      wrapper.className = `message ${role}`;
+      const label = document.createElement("div");
+      label.className = "message-label";
+      label.textContent = role === "user" ? "You" : "Assistant";
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = text;
+      wrapper.append(label, bubble);
+      if (role === "assistant") {
+        const badge = document.createElement("div");
+        badge.className = "route-badge";
+        wrapper.append(badge);
+      }
+      conversation.insertBefore(wrapper, document.querySelector(".composer-wrap"));
+      return wrapper;
+    }
+
+    function setRouteBadge(wrapper, route) {
+      const badge = wrapper.querySelector(".route-badge");
+      badge.replaceChildren();
+      if (route.private === true) privateConversation = true;
+      for (const [name, value] of [
+        ["lane", route.lane],
+        ["model", route.model || "no model"],
+        ["rule", route.rule],
+        ["source", route.label_source]
+      ]) {
+        const pill = document.createElement("span");
+        pill.className = `pill ${name}`;
+        pill.textContent = `${name}: ${value}`;
+        badge.append(pill);
+      }
+      if (route.counters) {
+        counts.total_requests = route.counters.total_requests;
+        counts.models = route.counters.models;
+        renderCounters();
+      }
+    }
+
+    async function sendMessage(text) {
+      const assistant = addMessage("assistant", "");
+      const bubble = assistant.querySelector(".bubble");
+      const error = document.getElementById("error");
+      error.textContent = "";
+      try {
+        const response = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages,
+            private_conversation: privateConversation
+          })
+        });
+        if (!response.ok || !response.body) throw new Error(`Request failed (${response.status})`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let eventName = "message";
+        while (true) {
+          const { value, done } = await reader.read();
+          buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+          const blocks = buffer.split("\n\n");
+          buffer = blocks.pop() || "";
+          for (const block of blocks) {
+            let dataText = "";
+            for (const line of block.split(/\r?\n/)) {
+              if (line.startsWith("event:")) eventName = line.slice(6).trim();
+              if (line.startsWith("data:")) dataText += line.slice(5).trim();
+            }
+            if (!dataText) continue;
+            const data = JSON.parse(dataText);
+            if (eventName === "route") setRouteBadge(assistant, data);
+            if (eventName === "token") bubble.textContent += data.token;
+            if (eventName === "error") error.textContent = data.message;
+            if (eventName === "done") messages.push({ role: "assistant", content: bubble.textContent });
+            eventName = "message";
+          }
+          if (done) break;
+        }
+      } catch (requestError) {
+        error.textContent = requestError.message || "Could not reach the router";
+      } finally {
+        document.getElementById("send-button").disabled = false;
+      }
+    }
+
+    document.getElementById("chat-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const input = document.getElementById("prompt");
+      const text = input.value.trim();
+      if (!text) return;
+      messages.push({ role: "user", content: text });
+      addMessage("user", text);
+      input.value = "";
+      document.getElementById("send-button").disabled = true;
+      counts.total_requests += 1;
+      renderCounters();
+      sendMessage(text);
+    });
+
+    document.getElementById("prompt").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        document.getElementById("chat-form").requestSubmit();
+      }
+    });
+
+    document.getElementById("router-mode-toggle").addEventListener("change", async (event) => {
+      const toggle = event.currentTarget;
+      toggle.disabled = true;
+      try {
+        await updateRouterMode({ mode: toggle.checked ? "jev" : "local" });
+      } catch (error) {
+        renderRouterMode(initialState.router_mode);
+        document.getElementById("error").textContent = error.message;
+      } finally {
+        toggle.disabled = false;
+      }
+    });
+
+    document.getElementById("local-llm-toggle").addEventListener("change", async (event) => {
+      const toggle = event.currentTarget;
+      toggle.disabled = true;
+      try {
+        await updateRouterMode({ local_llm: toggle.checked });
+      } catch (error) {
+        renderLocalLlm(initialState.local_llm_enabled);
+        document.getElementById("error").textContent = error.message;
+      } finally {
+        toggle.disabled = false;
+      }
+    });
+
+    renderModels(initialState.models);
+    renderCounters();
+    renderRouterMode(initialState.router_mode);
+    renderLocalLlm(initialState.local_llm_enabled);
+  </script>
+</body>
+</html>
